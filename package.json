@@ -1,0 +1,16 @@
+{
+  "name": "online-live-support",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/server",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@ols/server & npm run dev --workspace=@ols/web",
+    "dev:server": "npm run dev --workspace=@ols/server",
+    "dev:web": "npm run dev --workspace=@ols/web",
+    "typecheck": "npm run typecheck --workspaces",
+    "build": "npm run build --workspaces"
+  }
+}
