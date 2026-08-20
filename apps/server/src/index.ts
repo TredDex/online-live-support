@@ -5,6 +5,28 @@ import fastifyStatic from '@fastify/static';
 import { Server as SocketIOServer } from 'socket.io';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  getGlobalMarket,
+  getMarketCoins,
+  getTrendingCoins,
+  getMarketOverview,
+} from './services/market.service.js';
+
+import {
+  getVisitor,
+  listVisitors,
+  upsertVisitor,
+  setVisitorOffline,
+  createConversation,
+  getConversation,
+  listConversations,
+  updateConversation,
+  deleteConversation,
+  addMessage,
+  getMessages,
+} from './db/repository.js';
+
+import './db/init.js';
 
 const app = Fastify({
   logger: true,
@@ -33,6 +55,7 @@ type ConversationStatus =
 
 type Conversation = {
   conversationId: string;
+  visitorId?: string;
   status: ConversationStatus;
   customerSocketId?: string;
   agentId?: string;
@@ -49,8 +72,25 @@ type Message = {
   timestamp: string;
 };
 
-const conversations = new Map<string, Conversation>();
-const messages = new Map<string, Message[]>();
+type Visitor = {
+  visitorId: string;
+  socketId: string;
+  status: 'online' | 'offline';
+  name?: string;
+  email?: string;
+  phone?: string;
+  page: string;
+  userAgent: string;
+  language?: string;
+  timezone?: string;
+  latitude?: number;
+  longitude?: number;
+  locationPermission?: 'granted' | 'denied' | 'unavailable';
+  firstSeenAt: string;
+  lastSeenAt: string;
+  visitCount: number;
+};
+
 
 app.get('/health', async () => ({
   ok: true,
@@ -65,13 +105,86 @@ app.get('/api/status', async () => ({
 }));
 
 app.get('/api/conversations', async () => {
-  return Array.from(conversations.values());
+  return listConversations();
 });
+
+app.get('/api/markets/global', async (request, reply) => {
+  try {
+    return await getGlobalMarket();
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(502).send({
+      error: 'Market data provider unavailable',
+    });
+  }
+});
+
+app.get('/api/markets/coins', async (request, reply) => {
+  try {
+    return await getMarketCoins();
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(502).send({
+      error: 'Market data provider unavailable',
+    });
+  }
+});
+
+app.get('/api/markets/trending', async (request, reply) => {
+  try {
+    return await getTrendingCoins();
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(502).send({
+      error: 'Market data provider unavailable',
+    });
+  }
+});
+
+app.get('/api/markets/overview', async (request, reply) => {
+  try {
+    return await getMarketOverview();
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(502).send({
+      error: 'Market data provider unavailable',
+    });
+  }
+});
+
+app.get('/api/visitors', async () => {
+  return listVisitors();
+});
+
+app.get<{ Params: { id: string } }>(
+  '/api/visitors/:id',
+  async (request, reply) => {
+    const visitor = getVisitor(request.params.id);
+
+    if (!visitor) {
+      return reply.code(404).send({
+        error: 'Visitor not found',
+      });
+    }
+
+    return visitor;
+  },
+);
+
+app.get<{ Params: { id: string } }>(
+  '/api/visitors/:id/conversations',
+  async (request) => {
+    return listConversations().filter(
+      (conversation) =>
+        conversation.visitorId === request.params.id,
+    );
+  },
+);
 
 app.get<{ Params: { id: string } }>(
   '/api/conversations/:id',
   async (request, reply) => {
-    const conversation = conversations.get(request.params.id);
+    const conversation = getConversation(request.params.id);
 
     if (!conversation) {
       return reply.code(404).send({
@@ -86,7 +199,31 @@ app.get<{ Params: { id: string } }>(
 app.get<{ Params: { id: string } }>(
   '/api/conversations/:id/messages',
   async (request) => {
-    return messages.get(request.params.id) ?? [];
+    return getMessages(request.params.id);
+  },
+);
+
+app.delete<{ Params: { id: string } }>(
+  '/api/conversations/:id',
+  async (request, reply) => {
+    const conversation = getConversation(request.params.id);
+
+    if (!conversation) {
+      return reply.code(404).send({
+        error: 'Conversation not found',
+      });
+    }
+
+    deleteConversation(request.params.id);
+
+    io.emit('conversation:deleted', {
+      conversationId: request.params.id,
+    });
+
+    return {
+      ok: true,
+      conversationId: request.params.id,
+    };
   },
 );
 
@@ -101,20 +238,144 @@ io.on('connection', (socket) => {
   app.log.info(`Socket connected: ${socket.id}`);
 
   socket.on(
+    'visitor:identify',
+    (data: {
+      visitorId?: string;
+      page?: string;
+      userAgent?: string;
+      language?: string;
+      timezone?: string;
+    }) => {
+      const now = new Date().toISOString();
+      const existing = data.visitorId
+        ? getVisitor(data.visitorId)
+        : undefined;
+
+      const visitorId =
+        existing?.visitorId ??
+        data.visitorId ??
+        crypto.randomUUID();
+
+      const visitor: Visitor = {
+        visitorId,
+        socketId: socket.id,
+        status: 'online',
+        name: existing?.name,
+        email: existing?.email,
+        phone: existing?.phone,
+        page: data.page ?? '/',
+        userAgent: data.userAgent ?? '',
+        language: data.language,
+        timezone: data.timezone,
+        latitude: existing?.latitude,
+        longitude: existing?.longitude,
+        locationPermission: existing?.locationPermission,
+        firstSeenAt: existing?.firstSeenAt ?? now,
+        lastSeenAt: now,
+        visitCount: (existing?.visitCount ?? 0) + 1,
+      };
+
+      upsertVisitor(visitor);
+
+      socket.data.visitorId = visitorId;
+      socket.data.role = 'visitor';
+
+      socket.emit('visitor:identified', {
+        visitor,
+        returning: Boolean(existing),
+      });
+
+      io.emit('visitor:online', visitor);
+    },
+  );
+
+  socket.on(
+    'visitor:update',
+    (data: {
+      visitorId: string;
+      page?: string;
+      latitude?: number;
+      longitude?: number;
+      locationPermission?: 'granted' | 'denied' | 'unavailable';
+    }) => {
+      const visitor = getVisitor(data.visitorId);
+
+      if (!visitor) {
+        return;
+      }
+
+      visitor.socketId = socket.id;
+      visitor.status = 'online';
+      visitor.lastSeenAt = new Date().toISOString();
+
+      if (data.page !== undefined) {
+        visitor.page = data.page;
+      }
+
+      if (
+        typeof data.latitude === 'number' &&
+        typeof data.longitude === 'number'
+      ) {
+        visitor.latitude = data.latitude;
+        visitor.longitude = data.longitude;
+      }
+
+      if (data.locationPermission !== undefined) {
+        visitor.locationPermission = data.locationPermission;
+      }
+
+      upsertVisitor(visitor);
+
+      io.emit('visitor:updated', visitor);
+    },
+  );
+
+  socket.on(
+    'visitor:register',
+    (data: {
+      visitorId: string;
+      name: string;
+      email: string;
+      phone: string;
+    }) => {
+      const visitor = getVisitor(data.visitorId);
+
+      if (!visitor) {
+        socket.emit('error:visitor', {
+          message: 'Visitor session not found.',
+        });
+        return;
+      }
+
+      visitor.name = data.name.trim();
+      visitor.email = data.email.trim().toLowerCase();
+      visitor.phone = data.phone.trim();
+      visitor.lastSeenAt = new Date().toISOString();
+
+      upsertVisitor(visitor);
+
+      socket.emit('visitor:registered', visitor);
+      io.emit('visitor:updated', visitor);
+    },
+  );
+
+  socket.on(
     'customer:create',
     (data: { conversationId: string }) => {
       const now = new Date().toISOString();
 
+      const visitorId = socket.data.visitorId as string | undefined;
+
       const conversation: Conversation = {
         conversationId: data.conversationId,
+        visitorId,
         status: 'waiting_for_agent',
         customerSocketId: socket.id,
         createdAt: now,
         updatedAt: now,
       };
 
-      conversations.set(data.conversationId, conversation);
-      messages.set(data.conversationId, []);
+      createConversation(conversation);
 
       socket.join(`conversation:${data.conversationId}`);
 
@@ -144,7 +405,7 @@ io.on('connection', (socket) => {
       conversationId: string;
       agentId: string;
     }) => {
-      const conversation = conversations.get(data.conversationId);
+      const conversation = getConversation(data.conversationId);
 
       if (!conversation) {
         socket.emit('error:message', {
@@ -156,6 +417,8 @@ io.on('connection', (socket) => {
       conversation.status = 'agent_handling';
       conversation.agentId = data.agentId;
       conversation.updatedAt = new Date().toISOString();
+
+      updateConversation(conversation);
 
       socket.join(`conversation:${data.conversationId}`);
 
@@ -175,7 +438,7 @@ io.on('connection', (socket) => {
       senderRole: 'customer' | 'agent';
       message: string;
     }) => {
-      const conversation = conversations.get(data.conversationId);
+      const conversation = getConversation(data.conversationId);
 
       if (!conversation) {
         socket.emit('error:message', {
@@ -193,11 +456,10 @@ io.on('connection', (socket) => {
         timestamp: new Date().toISOString(),
       };
 
-      const conversationMessages =
-        messages.get(data.conversationId) ?? [];
+      addMessage(message);
 
-      conversationMessages.push(message);
-      messages.set(data.conversationId, conversationMessages);
+      conversation.updatedAt = message.timestamp;
+      updateConversation(conversation);
 
       io.to(`conversation:${data.conversationId}`).emit(
         'message:received',
@@ -212,7 +474,7 @@ io.on('connection', (socket) => {
       conversationId: string;
       agentId: string;
     }) => {
-      const conversation = conversations.get(data.conversationId);
+      const conversation = getConversation(data.conversationId);
 
       if (!conversation) {
         return;
@@ -221,6 +483,8 @@ io.on('connection', (socket) => {
       conversation.status = 'resolved';
       conversation.agentId = data.agentId;
       conversation.updatedAt = new Date().toISOString();
+
+      updateConversation(conversation);
 
       io.emit('conversation:resolved', {
         conversationId: data.conversationId,
@@ -244,6 +508,24 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const visitorId = socket.data.visitorId as string | undefined;
+
+    if (visitorId) {
+      const visitor = getVisitor(visitorId);
+
+      if (visitor) {
+        visitor.status = 'offline';
+        visitor.lastSeenAt = new Date().toISOString();
+
+        setVisitorOffline(
+          visitorId,
+          visitor.lastSeenAt,
+        );
+
+        io.emit('visitor:offline', visitor);
+      }
+    }
+
     app.log.info(`Socket disconnected: ${socket.id}`);
   });
 });
