@@ -1,0 +1,48 @@
+:root {
+  --bg:
+    #06080d;
+
+  --panel:
+    rgba(15,20,32,.75);
+
+  --border:
+    rgba(255,255,255,.08);
+
+  --text:
+    #f5f7ff;
+
+  --muted:
+    #8b93a7;
+
+  --primary:
+    #f5c542;
+
+  --success:
+    #22c55e;
+
+  --danger:
+    #ef4444;
+
+  --radius:
+    18px;
+}
+
+* {
+  box-sizing:border-box;
+}
+
+body {
+  margin:0;
+  background:
+  radial-gradient(
+    circle at top,
+    #18243d,
+    #06080d 45%
+  );
+
+  color:var(--text);
+  font-family:
+  Inter,
+  system-ui,
+  sans-serif;
+}
