@@ -1,10 +1,22 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import fastifyStatic from '@fastify/static';
 import { Server as SocketIOServer } from 'socket.io';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const app = Fastify({
   logger: true,
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const webDistPath = path.resolve(__dirname, '../../web/dist');
+
+await app.register(fastifyStatic, {
+  root: webDistPath,
+  prefix: '/',
 });
 
 await app.register(helmet);
@@ -242,6 +254,22 @@ const host = process.env.HOST ?? '0.0.0.0';
 await app.listen({
   port,
   host,
+});
+
+app.setNotFoundHandler(async (request, reply) => {
+  if (
+    request.method === 'GET' &&
+    request.headers.accept?.includes('text/html') &&
+    !request.url.startsWith('/api/') &&
+    !request.url.startsWith('/socket.io/')
+  ) {
+    return reply.sendFile('index.html');
+  }
+
+  return reply.code(404).send({
+    error: 'Not Found',
+    path: request.url,
+  });
 });
 
 app.log.info(

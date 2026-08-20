@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: online-live-support
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start --workspace=@ols/server
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: 24

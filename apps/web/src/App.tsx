@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
 const API_URL =
-  import.meta.env.VITE_API_URL ||
-  'http://127.0.0.1:3000';
+  import.meta.env.VITE_API_URL || undefined;
 
 type Page =
   | 'home'
