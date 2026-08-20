@@ -7,19 +7,70 @@ import SystemHealth from "../components/dashboard/SystemHealth";
 import { useDashboard } from "../hooks/useDashboard";
 
 export default function Dashboard() {
-  const data = useDashboard();
+  const {
+    conversations,
+    visitors,
+    status,
+    loading
+  } = useDashboard();
+
+
+  if (loading) {
+    return (
+      <section className="dashboard-page">
+        <h2>Loading support dashboard...</h2>
+      </section>
+    );
+  }
+
+
+  const activeChats = conversations.filter(
+    (item) =>
+      item.status !== "resolved"
+  ).length;
+
+
+  const resolvedChats = conversations.filter(
+    (item) =>
+      item.status === "resolved"
+  ).length;
+
 
   return (
     <section className="dashboard-page">
 
-      <MetricGrid />
+      <MetricGrid
+        activeChats={activeChats}
+        visitors={visitors.length}
+        resolved={resolvedChats}
+        socket={status?.socket ?? "offline"}
+      />
+
 
       <div className="dashboard-grid">
-        <LiveVisitors />
-        <AgentStatus />
-        <ActivityFeed />
+
+        <LiveVisitors
+          visitors={visitors}
+        />
+
+
+        <AgentStatus
+          status={status}
+        />
+
+
+        <ActivityFeed
+          conversations={conversations}
+        />
+
+
         <MarketPanel />
-        <SystemHealth />
+
+
+        <SystemHealth
+          status={status}
+        />
+
       </div>
 
     </section>
