@@ -7,3 +7,11 @@ dist/
 .DS_Store
 
 *.tsbuildinfo
+# Local database/data
+apps/server/data/
+
+# Backup files
+backups/
+
+# Temporary snapshots
+*.before-*
