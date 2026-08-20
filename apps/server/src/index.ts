@@ -248,28 +248,38 @@ io.on('connection', (socket) => {
   });
 });
 
+app.setNotFoundHandler(async (request, reply) => {
+  const pathname = request.url.split('?')[0];
+
+  const isApiRoute =
+    pathname.startsWith('/api/') ||
+    pathname === '/health';
+
+  const isSocketRoute =
+    pathname.startsWith('/socket.io/');
+
+  const isSpaRoute =
+    pathname === '/' ||
+    pathname === '/agent' ||
+    pathname === '/articles' ||
+    pathname === '/status';
+
+  if (!isApiRoute && !isSocketRoute && isSpaRoute) {
+    return reply.sendFile('index.html');
+  }
+
+  return reply.code(404).send({
+    error: 'Not Found',
+    path: pathname,
+  });
+});
+
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
 
 await app.listen({
   port,
   host,
-});
-
-app.setNotFoundHandler(async (request, reply) => {
-  if (
-    request.method === 'GET' &&
-    request.headers.accept?.includes('text/html') &&
-    !request.url.startsWith('/api/') &&
-    !request.url.startsWith('/socket.io/')
-  ) {
-    return reply.sendFile('index.html');
-  }
-
-  return reply.code(404).send({
-    error: 'Not Found',
-    path: request.url,
-  });
 });
 
 app.log.info(
